@@ -38,7 +38,6 @@ button,input{padding:6px;border-radius:6px;border:1px solid #ccc; margin-right:6
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script>
-// --- Firebase config ---
 const firebaseConfig = {
   apiKey: "AIzaSyD0U-Rc5maUk520MmGyfbIA0HgdRv_0M0o",
   authDomain: "faraon-2a0d0.firebaseapp.com",
@@ -49,13 +48,11 @@ const firebaseConfig = {
   appId: "1:335988088828:web:a50cb6f10a291faefbdc79",
   measurementId: "G-55HEPDJZ73"
 };
+
 firebase.initializeApp(firebaseConfig);
 const db=firebase.database();
 
-// --- Game constants ---
 const SUITS=['♠','♥','♦','♣'], RANKS=['6','7','8','9','10','J','Q','K','A'];
-
-// --- Game state ---
 let state={}, playerName='', roomId='';
 
 function log(msg){ const l=document.getElementById('log'); l.innerText=msg+'\n'+l.innerText; }
@@ -84,53 +81,38 @@ function render(){
 }
 
 function syncState(){ db.ref('rooms/'+roomId+'/state').set(state); }
+function isPlayable(card){ if(!state.center) return true; if(card.rank==='J') return true; if(card.suit===state.center.suit) return true; if(card.rank===state.center.rank) return true; return false; }
 
-function isPlayable(card){
-  if(!state.center) return true;
-  if(card.rank==='J') return true;
-  if(card.suit===state.center.suit) return true;
-  if(card.rank===state.center.rank) return true;
-  return false;
-}
+function drawTo(player){ if(state.deck.length===0){ state.deck=shuffle(state.discard); state.discard=[]; log('Колода перемешана.'); } if(state.deck.length>0){ const c=state.deck.pop(); player.hand.push(c); log(`${player.name} взял ${c.rank+c.suit}`); } }
 
 function playCard(idx){
-  const me=state.players.find(p=>p.name===playerName);
-  const card=me.hand.splice(idx,1)[0];
-  if(state.center) state.discard.push(state.center); state.center=card;
+  const me = state.players.find(p => p.name === playerName);
+  const card = me.hand.splice(idx,1)[0];
+  if(state.center) state.discard.push(state.center); state.center = card;
   log(`${playerName} положил ${card.rank+card.suit}`);
 
   // --- Apply effects ---
-  const nextIdx=(state.players.findIndex(p=>p.name===playerName)+1)%state.players.length;
-  const nextPlayer=state.players[nextIdx];
-  let skip=false;
-  if(card.rank==='7'){ for(let i=0;i<2;i++) drawTo(nextPlayer); skip=true; }
-  else if(card.rank==='8'){ drawTo(nextPlayer); skip=true; }
-  else if(card.rank==='A'){ skip=true; }
-  else if(card.rank==='K' && card.suit==='♠'){ for(let i=0;i<4;i++) drawTo(nextPlayer); skip=true; }
-  else if(card.rank==='J'){ let chosen=prompt('Выберите масть: 1♠ 2♥ 3♦ 4♣','1'); chosen=SUITS[parseInt(chosen)-1]||'♠'; state.center.suit=chosen; log(`Валет: загадана масть ${chosen}`); }
+  let nextIdx = (state.players.findIndex(p => p.name===playerName)+1) % state.players.length;
+  const nextPlayer = state.players[nextIdx];
+  if(card.rank==='7'){ drawTo(nextPlayer); drawTo(nextPlayer); nextIdx = (nextIdx+1)%state.players.length; }
+  else if(card.rank==='8'){ drawTo(nextPlayer); nextIdx = (nextIdx+1)%state.players.length; }
+  else if(card.rank==='A'){ nextIdx = (nextIdx+1)%state.players.length; }
+  else if(card.rank==='K' && card.suit==='♠'){ for(let i=0;i<4;i++) drawTo(nextPlayer); nextIdx = (nextIdx+1)%state.players.length; }
+  else if(card.rank==='J'){ let chosen=prompt('Выберите масть 1-♠ 2-♥ 3-♦ 4-♣','1'); state.center.suit=SUITS[parseInt(chosen)-1]; log(`Валет: загадана масть ${state.center.suit}`); }
 
+  // --- Check round end ---
   if(me.hand.length===0){ endRound(playerName); return; }
-
-  state.current=skip?(state.players[(nextIdx+1)%state.players.length].name):nextPlayer.name;
+  state.current = state.players[nextIdx].name;
   syncState();
 }
-
-function drawTo(player){ if(state.deck.length===0){ state.deck=shuffle(state.discard); state.discard=[]; log('Колода перемешана.'); } if(state.deck.length>0){ const c=state.deck.pop(); player.hand.push(c); log(`${player.name} взял ${c.rank+c.suit}`); } }
 
 function endRound(finisherName){
   const finisher=state.players.find(p=>p.name===finisherName);
   log(`Раунд закончен. ${finisherName} сбросил все карты.`);
-  state.players.forEach(p=>{ if(p===finisher) return; let sum=0; p.hand.forEach(c=>{
-    if(c.rank==='10') sum+=10; else if(c.rank==='J') sum+=20; else if(c.rank==='Q') sum+=3; else if(c.rank==='K') sum+=4; else if(c.rank==='A') sum+=11; else sum+=0;
-  }); p.score=(p.score||0)+sum;
-  if(p.score===100) p.score=0;
-  });
-  // Special finish
+  state.players.forEach(p=>{ if(p===finisher) return; let sum=0; p.hand.forEach(c=>{ if(c.rank==='10') sum+=10; else if(c.rank==='J') sum+=20; else if(c.rank==='Q') sum+=3; else if(c.rank==='K') sum+=4; else if(c.rank==='A') sum+=11; else sum+=0; }); p.score=(p.score||0)+sum; if(p.score===100) p.score=0; });
   if(state.center.rank==='J'){ finisher.score=(finisher.score||0)-20; }
   else if(state.center.rank==='K'&&state.center.suit==='♠'){ finisher.score=(finisher.score||0)-40; }
   else if(state.center.rank==='Q'){ state.players.forEach(p=>{ if(p!==finisher) p.score=(p.score||0)*1; }); }
-
-  // Prepare next round
   state.players.forEach(p=>{ state.discard.push(...p.hand); p.hand=[]; });
   if(state.center) state.discard.push(state.center); state.center=null;
   state.deck=shuffle(state.deck.concat(state.discard)); state.discard=[];
@@ -146,8 +128,7 @@ function initGame(){
   if(!state.center) state.center=null;
   if(!state.current) state.current=playerName;
   if(!state.players.find(p=>p.name===playerName)) state.players.push({name:playerName,hand:state.deck.splice(0,4),score:0});
-  syncState();
-  render();
+  syncState(); render();
 }
 
 document.getElementById('createRoomBtn').onclick=()=>{
@@ -165,7 +146,6 @@ document.getElementById('joinRoomBtn').onclick=()=>{
   db.ref('rooms/'+roomId+'/state').once('value').then(s=>{ state=s.val()||{}; initGame(); });
   db.ref('rooms/'+roomId+'/state').on('value',snapshot=>{ state=snapshot.val(); render(); });
 };
-
 const params=new URLSearchParams(window.location.search); if(params.get('room')){ document.getElementById('roomId').value=params.get('room'); }
 </script>
 </body>

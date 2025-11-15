@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>36-карточная онлайн-игра Полная версия</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; padding:12px; background:#f3f4f6;}
+h1{font-size:1.2rem}
+.hand,.playersList{display:flex;gap:6px;flex-wrap:wrap}
+.card{padding:8px 10px;border-radius:6px;border:1px solid #bbb; min-width:54px; text-align:center; cursor:pointer; user-select:none; background:#fff}
+.card.disabled{opacity:0.45; cursor:not-allowed}
+.playerBadge{padding:6px 8px;border-radius:6px;background:#eef2ff;border:1px solid #c7d2fe}
+#centerCard{font-size:2rem;padding:18px;border-radius:8px;border:1px solid #ddd; min-width:110px; text-align:center; background:#fff; margin-bottom:12px}
+button,input{padding:6px;border-radius:6px;border:1px solid #ccc; margin-right:6px}
+#log{height:160px;overflow:auto;background:#081224;color:#e6f7ff;padding:8px;border-radius:6px;font-family:monospace;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>36-карточная онлайн-игра (Полная версия)</h1>
+<div>
+<label>Ник: <input id="myName" placeholder="Игрок1"></label>
+<button id="createRoomBtn">Создать комнату</button>
+<label>Комната: <input id="roomId"></label>
+<button id="joinRoomBtn">Присоединиться</button>
+</div>
+<hr>
+<div id="gameArea" style="display:none">
+<div id="centerCard">—</div>
+<div>Колода: <span id="deckCount">36</span> • Сброс: <span id="discardCount">0</span></div>
+<h3>Ваша рука:</h3>
+<div id="hand" class="hand"></div>
+<h3>Игроки:</h3>
+<div id="playersList" class="playersList"></div>
+<div id="log"></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script>
+// --- Firebase config ---
+const firebaseConfig = {
+  apiKey: "ВАШ_API_KEY",
+  authDomain: "ВАШ_PROJECT_ID.firebaseapp.com",
+  databaseURL: "https://ВАШ_PROJECT_ID-default-rtdb.firebaseio.com",
+  projectId: "ВАШ_PROJECT_ID",
+  storageBucket: "ВАШ_PROJECT_ID.appspot.com",
+  messagingSenderId: "ВАШ_MESSAGING_SENDER_ID",
+  appId: "ВАШ_APP_ID"
+};
+firebase.initializeApp(firebaseConfig);
+const db=firebase.database();
+
+// --- Game constants ---
+const SUITS=['♠','♥','♦','♣'], RANKS=['6','7','8','9','10','J','Q','K','A'];
+
+// --- Game state ---
+let state={}, playerName='', roomId='';
+
+function log(msg){ const l=document.getElementById('log'); l.innerText=msg+'\n'+l.innerText; }
+function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+function makeDeck(){ let d=[]; SUITS.forEach(s=>RANKS.forEach(r=>d.push({rank:r,suit:s,id:r+s}))); return shuffle(d); }
+
+function render(){
+  const handDiv=document.getElementById('hand');
+  handDiv.innerHTML='';
+  const me=state.players.find(p=>p.name===playerName);
+  if(me) me.hand.forEach((c,i)=>{
+    const el=document.createElement('div'); el.className='card'; el.innerText=c.rank+c.suit;
+    if(state.current===playerName && isPlayable(c)) el.onclick=()=>playCard(i);
+    else el.classList.add('disabled');
+    handDiv.appendChild(el);
+  });
+  document.getElementById('centerCard').innerText=state.center?state.center.rank+state.center.suit:'—';
+  document.getElementById('deckCount').innerText=state.deck.length;
+  document.getElementById('discardCount').innerText=state.discard.length;
+  const playersDiv=document.getElementById('playersList'); playersDiv.innerHTML='';
+  state.players.forEach(p=>{
+    const b=document.createElement('div'); b.className='playerBadge';
+    b.innerText=p.name+' ('+p.hand.length+' карт) • очки:'+ (p.score||0)+(state.current===p.name?' ◀':'');
+    playersDiv.appendChild(b);
+  });
+}
+
+function syncState(){ db.ref('rooms/'+roomId+'/state').set(state); }
+
+function isPlayable(card){
+  if(!state.center) return true;
+  if(card.rank==='J') return true;
+  if(card.suit===state.center.suit) return true;
+  if(card.rank===state.center.rank) return true;
+  return false;
+}
+
+function playCard(idx){
+  const me=state.players.find(p=>p.name===playerName);
+  const card=me.hand.splice(idx,1)[0];
+  if(state.center) state.discard.push(state.center); state.center=card;
+  log(`${playerName} положил ${card.rank+card.suit}`);
+
+  // --- Apply effects ---
+  const nextIdx=(state.players.findIndex(p=>p.name===playerName)+1)%state.players.length;
+  const nextPlayer=state.players[nextIdx];
+  let skip=false;
+  if(card.rank==='7'){ for(let i=0;i<2;i++) drawTo(nextPlayer); skip=true; }
+  else if(card.rank==='8'){ drawTo(nextPlayer); skip=true; }
+  else if(card.rank==='A'){ skip=true; }
+  else if(card.rank==='K' && card.suit==='♠'){ for(let i=0;i<4;i++) drawTo(nextPlayer); skip=true; }
+  else if(card.rank==='J'){ let chosen=prompt('Выберите масть: 1♠ 2♥ 3♦ 4♣','1'); chosen=SUITS[parseInt(chosen)-1]||'♠'; state.center.suit=chosen; log(`Валет: загадана масть ${chosen}`); }
+
+  if(me.hand.length===0){ endRound(playerName); return; }
+
+  state.current=skip?(state.players[(nextIdx+1)%state.players.length].name):nextPlayer.name;
+  syncState();
+}
+
+function drawTo(player){ if(state.deck.length===0){ state.deck=shuffle(state.discard); state.discard=[]; log('Колода перемешана.'); } if(state.deck.length>0){ const c=state.deck.pop(); player.hand.push(c); log(`${player.name} взял ${c.rank+c.suit}`); } }
+
+function endRound(finisherName){
+  const finisher=state.players.find(p=>p.name===finisherName);
+  log(`Раунд закончен. ${finisherName} сбросил все карты.`);
+  state.players.forEach(p=>{ if(p===finisher) return; let sum=0; p.hand.forEach(c=>{
+    if(c.rank==='10') sum+=10; else if(c.rank==='J') sum+=20; else if(c.rank==='Q') sum+=3; else if(c.rank==='K') sum+=4; else if(c.rank==='A') sum+=11; else sum+=0;
+  }); p.score=(p.score||0)+sum;
+  if(p.score===100) p.score=0;
+  });
+  // Special finish
+  if(state.center.rank==='J'){ finisher.score=(finisher.score||0)-20; }
+  else if(state.center.rank==='K'&&state.center.suit==='♠'){ finisher.score=(finisher.score||0)-40; }
+  else if(state.center.rank==='Q'){ state.players.forEach(p=>{ if(p!==finisher) p.score=(p.score||0)*1; }); }
+
+  // Prepare next round
+  state.players.forEach(p=>{ state.discard.push(...p.hand); p.hand=[]; });
+  if(state.center) state.discard.push(state.center); state.center=null;
+  state.deck=shuffle(state.deck.concat(state.discard)); state.discard=[];
+  state.current=finisherName;
+  syncState();
+}
+
+function initGame(){
+  document.getElementById('gameArea').style.display='block';
+  if(!state.players) state.players=[];
+  if(!state.deck) state.deck=makeDeck();
+  if(!state.discard) state.discard=[];
+  if(!state.center) state.center=null;
+  if(!state.current) state.current=playerName;
+  if(!state.players.find(p=>p.name===playerName)) state.players.push({name:playerName,hand:state.deck.splice(0,4),score:0});
+  syncState();
+  render();
+}
+
+document.getElementById('createRoomBtn').onclick=()=>{
+  playerName=document.getElementById('myName').value||'Игрок1';
+  roomId=Math.random().toString(36).substring(2,8);
+  window.prompt('Комната создана, отправьте ссылку друзьям', window.location.href+'?room='+roomId);
+  db.ref('rooms/'+roomId+'/state').set({players:[],deck:[],discard:[],center:null,current:''});
+  db.ref('rooms/'+roomId+'/state').on('value',snapshot=>{ state=snapshot.val(); render(); });
+  initGame();
+};
+
+document.getElementById('joinRoomBtn').onclick=()=>{
+  playerName=document.getElementById('myName').value||'Игрок1';
+  roomId=document.getElementById('roomId').value;
+  db.ref('rooms/'+roomId+'/state').once('value').then(s=>{ state=s.val()||{}; initGame(); });
+  db.ref('rooms/'+roomId+'/state').on('value',snapshot=>{ state=snapshot.val(); render(); });
+};
+
+const params=new URLSearchParams(window.location.search); if(params.get('room')){ document.getElementById('roomId').value=params.get('room'); }
+</script>
+</body>
+</html>

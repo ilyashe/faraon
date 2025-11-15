@@ -131,7 +131,6 @@ function endRound(finisherName){
   log(`Раунд закончен. ${finisherName} сбросил все карты.`);
   state.players.forEach(p=>{ if(p===finisher) return; let sum=0; p.hand.forEach(c=>{ if(c.rank==='10') sum+=10; else if(c.rank==='J') sum+=20; else if(c.rank==='Q') sum+=3; else if(c.rank==='K') sum+=4; else if(c.rank==='A') sum+=11; else sum+=0; }); p.score=(p.score||0)+sum; if(p.score===100) p.score=0; });
 
-  // финальные карты
   if(state.center.rank==='J') finisher.score=(finisher.score||0)-20;
   else if(state.center.rank==='K'&&state.center.suit==='♠') finisher.score=(finisher.score||0)-40;
   else if(state.center.rank==='Q'){ state.players.forEach(p=>{ if(p!==finisher) p.score=(p.score||0)*1; }); }
@@ -150,7 +149,18 @@ function initGame(){
   if(!state.discard) state.discard=[];
   if(!state.center) state.center=null;
   if(!state.current) state.current=playerName;
-  if(!state.players.find(p=>p.name===playerName)) state.players.push({name:playerName,hand:state.deck.splice(0,4),score:0});
+
+  if(!state.players.find(p=>p.name===playerName)){
+    let hand;
+    if(state.players.length===0){ // раздающий
+      hand = state.deck.splice(0,3);
+      state.center = state.deck.splice(0,1)[0];
+    } else {
+      hand = state.deck.splice(0,4);
+    }
+    state.players.push({name:playerName, hand:hand, score:0});
+  }
+
   syncState(); render();
 }
 

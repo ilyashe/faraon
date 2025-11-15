@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>36-карточная онлайн-игра Полная версия</title>
+<title>36-карточная онлайн-игра</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; padding:12px; background:#f3f4f6;}
@@ -17,7 +17,7 @@ button,input{padding:6px;border-radius:6px;border:1px solid #ccc; margin-right:6
 </style>
 </head>
 <body>
-<h1>36-карточная онлайн-игра (Полная версия)</h1>
+<h1>36-карточная онлайн-игра</h1>
 <div>
 <label>Ник: <input id="myName" placeholder="Игрок1"></label>
 <button id="createRoomBtn">Создать комнату</button>
@@ -83,41 +83,64 @@ function render(){
 function syncState(){ db.ref('rooms/'+roomId+'/state').set(state); }
 function isPlayable(card){ if(!state.center) return true; if(card.rank==='J') return true; if(card.suit===state.center.suit) return true; if(card.rank===state.center.rank) return true; return false; }
 
-function drawTo(player){ if(state.deck.length===0){ state.deck=shuffle(state.discard); state.discard=[]; log('Колода перемешана.'); } if(state.deck.length>0){ const c=state.deck.pop(); player.hand.push(c); log(`${player.name} взял ${c.rank+c.suit}`); } }
+function drawTo(player, count=1){
+  for(let i=0;i<count;i++){
+    if(state.deck.length===0){ state.deck=shuffle(state.discard); state.discard=[]; log('Колода перемешана'); }
+    if(state.deck.length>0){ const c=state.deck.pop(); player.hand.push(c);
+      if(player.name===playerName) log(`${player.name} взял ${c.rank+c.suit}`); else log(`${player.name} взял карту`);
+    }
+  }
+}
+
+function nextPlayerName(name){
+  const idx=state.players.findIndex(p=>p.name===name);
+  return state.players[(idx+1)%state.players.length].name;
+}
+
+function checkPlayableOrDraw(player){
+  if(!player.hand.some(c=>isPlayable(c))){
+    drawTo(player);
+    if(!player.hand.some(c=>isPlayable(c))){ state.current=nextPlayerName(player.name); log(`${player.name} пропускает ход`); syncState(); render(); return false; }
+  }
+  return true;
+}
 
 function playCard(idx){
   const me = state.players.find(p => p.name === playerName);
+  if(!checkPlayableOrDraw(me)) return;
   const card = me.hand.splice(idx,1)[0];
   if(state.center) state.discard.push(state.center); state.center = card;
   log(`${playerName} положил ${card.rank+card.suit}`);
 
-  // --- Apply effects ---
   let nextIdx = (state.players.findIndex(p => p.name===playerName)+1) % state.players.length;
   const nextPlayer = state.players[nextIdx];
-  if(card.rank==='7'){ drawTo(nextPlayer); drawTo(nextPlayer); nextIdx = (nextIdx+1)%state.players.length; }
-  else if(card.rank==='8'){ drawTo(nextPlayer); nextIdx = (nextIdx+1)%state.players.length; }
-  else if(card.rank==='A'){ nextIdx = (nextIdx+1)%state.players.length; }
-  else if(card.rank==='K' && card.suit==='♠'){ for(let i=0;i<4;i++) drawTo(nextPlayer); nextIdx = (nextIdx+1)%state.players.length; }
+
+  if(card.rank==='7'){ drawTo(nextPlayer,2); nextIdx=(nextIdx+1)%state.players.length; }
+  else if(card.rank==='8'){ drawTo(nextPlayer,1); nextIdx=(nextIdx+1)%state.players.length; }
+  else if(card.rank==='A'){ nextIdx=(nextIdx+1)%state.players.length; }
+  else if(card.rank==='K'&&card.suit==='♠'){ drawTo(nextPlayer,4); nextIdx=(nextIdx+1)%state.players.length; }
   else if(card.rank==='J'){ let chosen=prompt('Выберите масть 1-♠ 2-♥ 3-♦ 4-♣','1'); state.center.suit=SUITS[parseInt(chosen)-1]; log(`Валет: загадана масть ${state.center.suit}`); }
 
-  // --- Check round end ---
   if(me.hand.length===0){ endRound(playerName); return; }
-  state.current = state.players[nextIdx].name;
-  syncState();
+  state.current=state.players[nextIdx].name;
+  syncState(); render();
 }
 
 function endRound(finisherName){
   const finisher=state.players.find(p=>p.name===finisherName);
   log(`Раунд закончен. ${finisherName} сбросил все карты.`);
   state.players.forEach(p=>{ if(p===finisher) return; let sum=0; p.hand.forEach(c=>{ if(c.rank==='10') sum+=10; else if(c.rank==='J') sum+=20; else if(c.rank==='Q') sum+=3; else if(c.rank==='K') sum+=4; else if(c.rank==='A') sum+=11; else sum+=0; }); p.score=(p.score||0)+sum; if(p.score===100) p.score=0; });
-  if(state.center.rank==='J'){ finisher.score=(finisher.score||0)-20; }
-  else if(state.center.rank==='K'&&state.center.suit==='♠'){ finisher.score=(finisher.score||0)-40; }
+
+  // финальные карты
+  if(state.center.rank==='J') finisher.score=(finisher.score||0)-20;
+  else if(state.center.rank==='K'&&state.center.suit==='♠') finisher.score=(finisher.score||0)-40;
   else if(state.center.rank==='Q'){ state.players.forEach(p=>{ if(p!==finisher) p.score=(p.score||0)*1; }); }
+
   state.players.forEach(p=>{ state.discard.push(...p.hand); p.hand=[]; });
   if(state.center) state.discard.push(state.center); state.center=null;
   state.deck=shuffle(state.deck.concat(state.discard)); state.discard=[];
   state.current=finisherName;
-  syncState();
+  syncState(); render();
 }
 
 function initGame(){
